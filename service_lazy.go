@@ -1,0 +1,110 @@
+package wheels
+
+import (
+	"fmt"
+	"reflect"
+	"sync"
+)
+
+var errType = reflect.TypeOf(new(error)).Elem()
+
+type ServiceLazy struct {
+	name string
+	ctor reflect.Value // func(...) (...vals, error) or func (...) vals
+	typ  reflect.Type
+
+	mu       sync.RWMutex
+	instance any
+	value    reflect.Value
+	built    bool
+}
+
+func newServiceLazy(name string, ctor any) (Service, error) {
+	rv := reflect.ValueOf(ctor)
+	rt := reflect.TypeOf(ctor)
+	if rt.Kind() != reflect.Func {
+		return nil, fmt.Errorf("name: %v, err: %w", name, ErrInvalidCtorType)
+	}
+	numOut := rt.NumOut()
+	if numOut == 0 || numOut > 2 {
+		return nil, fmt.Errorf("name: %v, err: %w", name, ErrInvalidCtorType)
+	}
+	if numOut == 2 && !rt.Out(1).Implements(errType) {
+		return nil, fmt.Errorf("name: %v, err: %w", name, ErrInvalidCtorType)
+	}
+	typ := rt.Out(0)
+	if name == "" {
+		name = typ.String()
+	}
+	return &ServiceLazy{
+		name: name,
+		ctor: rv,
+		typ:  typ,
+	}, nil
+}
+
+func (s *ServiceLazy) getType() reflect.Type {
+	return s.typ
+}
+
+func (s *ServiceLazy) getName() string {
+	return s.name
+}
+
+func (s *ServiceLazy) getInstance(i *Injector) (ins any, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.built {
+		return s.instance, nil
+	}
+	err = s.buildInstanceLocked(i)
+	if err != nil {
+		return nil, err
+	}
+	return s.instance, nil
+}
+
+// buildInstanceLocked TODO support ctx?
+func (s *ServiceLazy) buildInstanceLocked(i *Injector) (err error) {
+	ctype := s.ctor.Type()
+	paramValues := make([]reflect.Value, ctype.NumIn())
+	for j := 0; j < ctype.NumIn(); j++ {
+		ptype := ctype.In(j)
+		pname := ptype.String()
+		pvalue, err := i.getValueLocked(pname)
+		if err != nil {
+			return err
+		}
+		paramValues[j] = pvalue
+	}
+	retValues := s.ctor.Call(paramValues)
+	if len(retValues) == 2 {
+		errValue := retValues[1]
+		if errValue.IsNil() {
+			err = nil
+		} else {
+			err = errValue.Interface().(error)
+		}
+	}
+	if err != nil {
+		return
+	}
+	s.instance = retValues[0].Interface()
+	s.value = retValues[0]
+	s.built = true
+	i.setInstance(s.name, s.instance)
+	return nil
+}
+
+func (s *ServiceLazy) getValue(i *Injector) (val reflect.Value, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.built {
+		return s.value, nil
+	}
+	err = s.buildInstanceLocked(i)
+	if err != nil {
+		return val, err
+	}
+	return s.value, nil
+}
