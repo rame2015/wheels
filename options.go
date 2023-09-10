@@ -1,8 +1,9 @@
 package wheels
 
 type providerOptions struct {
-	Name string
-	As   []any
+	Name       string
+	As         []any
+	IsOverride bool
 }
 
 type ProvideOption func(*providerOptions)

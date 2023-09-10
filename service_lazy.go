@@ -10,13 +10,14 @@ var errType = reflect.TypeOf(new(error)).Elem()
 
 type ServiceLazy struct {
 	name string
-	ctor reflect.Value // func(...) (...vals, error) or func (...) vals
 	typ  reflect.Type
+	ctor reflect.Value // func(...) (...vals, error) or func (...) vals
 
-	mu       sync.RWMutex
-	instance any
-	value    reflect.Value
-	built    bool
+	mu         sync.RWMutex
+	instance   any
+	value      reflect.Value
+	built      bool
+	paramNames []string
 }
 
 func newServiceLazy(name string, ctor any) (Service, error) {
@@ -43,6 +44,17 @@ func newServiceLazy(name string, ctor any) (Service, error) {
 	}, nil
 }
 
+func (s *ServiceLazy) reset() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.built {
+		return false
+	}
+	s.built = false
+	s.paramNames = nil
+	return true
+}
+
 func (s *ServiceLazy) getType() reflect.Type {
 	return s.typ
 }
@@ -51,13 +63,13 @@ func (s *ServiceLazy) getName() string {
 	return s.name
 }
 
-func (s *ServiceLazy) getInstance(i *Injector) (ins any, err error) {
+func (s *ServiceLazy) getInstance(i *Injector, insName string) (ins any, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.built {
 		return s.instance, nil
 	}
-	err = s.buildInstanceLocked(i)
+	err = s.buildInstanceLocked(i, insName)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +77,7 @@ func (s *ServiceLazy) getInstance(i *Injector) (ins any, err error) {
 }
 
 // buildInstanceLocked TODO support ctx?
-func (s *ServiceLazy) buildInstanceLocked(i *Injector) (err error) {
+func (s *ServiceLazy) buildInstanceLocked(i *Injector, insName string) (err error) {
 	ctype := s.ctor.Type()
 	paramValues := make([]reflect.Value, ctype.NumIn())
 	for j := 0; j < ctype.NumIn(); j++ {
@@ -76,6 +88,8 @@ func (s *ServiceLazy) buildInstanceLocked(i *Injector) (err error) {
 			return err
 		}
 		paramValues[j] = pvalue
+		s.paramNames = append(s.paramNames, pname)
+		i.appendAssociatedService(pname, s)
 	}
 	retValues := s.ctor.Call(paramValues)
 	if len(retValues) == 2 {
@@ -92,17 +106,17 @@ func (s *ServiceLazy) buildInstanceLocked(i *Injector) (err error) {
 	s.instance = retValues[0].Interface()
 	s.value = retValues[0]
 	s.built = true
-	i.setInstance(s.name, s.instance)
+	i.setInstance(insName, s.instance)
 	return nil
 }
 
-func (s *ServiceLazy) getValue(i *Injector) (val reflect.Value, err error) {
+func (s *ServiceLazy) getValue(i *Injector, insName string) (val reflect.Value, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.built {
 		return s.value, nil
 	}
-	err = s.buildInstanceLocked(i)
+	err = s.buildInstanceLocked(i, insName)
 	if err != nil {
 		return val, err
 	}

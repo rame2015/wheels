@@ -3,6 +3,8 @@ package wheels
 import (
 	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type ServiceTest interface {
@@ -68,6 +70,18 @@ func newServiceF() (*ServiceF, error) {
 
 type ServiceG struct {
 	F *ServiceF
+}
+
+type ServiceH struct {
+	S ServiceTest
+}
+
+type ServiceJ struct {
+	s ServiceTest
+}
+
+func newServiceJ(s ServiceTest) *ServiceJ {
+	return &ServiceJ{s: s}
 }
 
 func TestInjector_Provide(t *testing.T) {
@@ -361,6 +375,126 @@ func TestInjector_Invoke(t *testing.T) {
 			}
 			if err == nil && ins.(ServiceTest).Print() != tt.name {
 				t.Errorf("Injector.Invoke() name = %v, wantName = %v", ins.(ServiceTest).Print(), tt.name)
+			}
+		})
+	}
+}
+
+func TestInjector_Override(t *testing.T) {
+	i := New()
+	_ = i.Provide(NewServiceB, As(new(ServiceTest)))
+	_ = i.ProvideInstance(&ServiceA{})
+	_ = i.ProvideZero(&ServiceC{})
+	_ = i.ProvideZero(ServiceD{})
+	_ = i.ProvideZero(&ServiceE{})
+	b, _ := i.Invoke("wheels.ServiceTest")
+	assert.Equal(t, "B", b.(ServiceTest).Print())
+	type args struct {
+		override func() error
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr error
+	}{
+		{
+			name: "A",
+			args: args{
+				override: func() error {
+					return i.Override(NewServiceA, As(new(ServiceTest)))
+				},
+			},
+		},
+		{
+			name: "C",
+			args: args{
+				override: func() error {
+					return i.OverrideZero(&ServiceC{}, As(new(ServiceTest)))
+				},
+			},
+		},
+		{
+			name: "D",
+			args: args{
+				override: func() error {
+					return i.OverrideInstance(&ServiceD{}, As(new(ServiceTest)))
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.args.override()
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Injector.Override() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			ins, err := i.Invoke("wheels.ServiceTest")
+			if err != nil || ins.(ServiceTest).Print() != tt.name {
+				t.Errorf("Injector.Invoke() name = %v, wantName = %v, err = %v", ins.(ServiceTest).Print(), tt.name, err)
+			}
+		})
+	}
+}
+
+func TestInjector_OverrideAssociated(t *testing.T) {
+	i := New()
+	_ = i.Provide(NewServiceB, As(new(ServiceTest)))
+	_ = i.ProvideInstance(&ServiceA{})
+	_ = i.ProvideZero(&ServiceC{})
+	_ = i.ProvideZero(ServiceD{})
+	_ = i.ProvideZero(&ServiceE{})
+	_ = i.ProvideZero(&ServiceH{})
+	_ = i.Provide(newServiceJ)
+	h, _ := i.Invoke("*wheels.ServiceH")
+	j, _ := i.Invoke("*wheels.ServiceJ")
+	assert.Equal(t, "B", h.(*ServiceH).S.Print())
+	assert.Equal(t, "B", j.(*ServiceJ).s.Print())
+	type args struct {
+		override func() error
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr error
+	}{
+		{
+			name: "A",
+			args: args{
+				override: func() error {
+					return i.Override(NewServiceA, As(new(ServiceTest)))
+				},
+			},
+		},
+		{
+			name: "C",
+			args: args{
+				override: func() error {
+					return i.OverrideZero(&ServiceC{}, As(new(ServiceTest)))
+				},
+			},
+		},
+		{
+			name: "D",
+			args: args{
+				override: func() error {
+					return i.OverrideInstance(&ServiceD{}, As(new(ServiceTest)))
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.args.override()
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Injector.Override() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			ins, err := i.Invoke("*wheels.ServiceH")
+			if err != nil || ins.(*ServiceH).S.Print() != tt.name {
+				t.Errorf("Injector.Invoke() name = %v, wantName = %v, err = %v", ins.(*ServiceH).S.Print(), tt.name, err)
+			}
+			ins, err = i.Invoke("*wheels.ServiceJ")
+			if err != nil || ins.(*ServiceJ).s.Print() != tt.name {
+				t.Errorf("Injector.Invoke() name = %v, wantName = %v, err = %v", ins.(*ServiceJ).s.Print(), tt.name, err)
 			}
 		})
 	}

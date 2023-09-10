@@ -5,6 +5,7 @@ import "reflect"
 type Service interface {
 	getName() string
 	getType() reflect.Type
-	getValue(*Injector) (reflect.Value, error)
-	getInstance(*Injector) (any, error)
+	getValue(*Injector, string) (reflect.Value, error)
+	getInstance(*Injector, string) (any, error)
+	reset() bool
 }

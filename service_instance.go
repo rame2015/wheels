@@ -9,6 +9,7 @@ type ServiceInstance struct {
 	typ      reflect.Type
 	instance any
 	value    reflect.Value
+	built    bool
 }
 
 func newServiceInstance(name string, val any) Service {
@@ -24,6 +25,10 @@ func newServiceInstance(name string, val any) Service {
 	}
 }
 
+func (s *ServiceInstance) reset() bool {
+	return false
+}
+
 func (s *ServiceInstance) getName() string {
 	return s.name
 }
@@ -32,10 +37,14 @@ func (s *ServiceInstance) getType() reflect.Type {
 	return s.typ
 }
 
-func (s *ServiceInstance) getInstance(i *Injector) (any, error) {
+func (s *ServiceInstance) getInstance(i *Injector, insName string) (any, error) {
+	if !s.built {
+		i.setInstance(insName, s)
+		s.built = true
+	}
 	return s.instance, nil
 }
 
-func (s *ServiceInstance) getValue(i *Injector) (val reflect.Value, err error) {
+func (s *ServiceInstance) getValue(i *Injector, insName string) (val reflect.Value, err error) {
 	return s.value, nil
 }

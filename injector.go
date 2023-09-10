@@ -20,20 +20,26 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+
+	"golang.org/x/exp/slices"
 )
 
 type Injector struct {
 	instances sync.Map
 
-	mu            sync.RWMutex
-	services      map[string]Service
-	earlyServices map[string]Service
+	mu                 sync.RWMutex
+	services           map[string]Service
+	serviceInstances   map[Service][]string
+	earlyServices      map[string]Service
+	associatedServices map[string][]Service
 }
 
 func New() *Injector {
 	return &Injector{
-		services:      map[string]Service{},
-		earlyServices: map[string]Service{},
+		services:           map[string]Service{},
+		serviceInstances:   map[Service][]string{},
+		earlyServices:      map[string]Service{},
+		associatedServices: map[string][]Service{},
 	}
 }
 
@@ -55,16 +61,7 @@ func (i *Injector) ProvideInstance(val any, opts ...ProvideOption) error {
 		po(options)
 	}
 	svc := newServiceInstance(options.Name, val)
-	err := i.provide(svc, options)
-	if err != nil {
-		return err
-	}
-	ins, err := svc.getInstance(i)
-	if err != nil {
-		return err
-	}
-	i.setInstance(svc.getName(), ins)
-	return nil
+	return i.provide(svc, options)
 }
 
 func (i *Injector) ProvideZero(val any, opts ...ProvideOption) error {
@@ -87,16 +84,67 @@ func (i *Injector) Invoke(name string, opts ...InvokeOption) (ins any, err error
 	return i.invoke(name)
 }
 
+func (i *Injector) Override(ctor any, opts ...ProvideOption) error {
+	options := &providerOptions{}
+	for _, po := range opts {
+		po(options)
+	}
+	svc, err := newServiceLazy(options.Name, ctor)
+	if err != nil {
+		return err
+	}
+	return i.override(svc, options)
+}
+
+func (i *Injector) OverrideInstance(val any, opts ...ProvideOption) error {
+	options := &providerOptions{}
+	for _, po := range opts {
+		po(options)
+	}
+	svc := newServiceInstance(options.Name, val)
+	return i.override(svc, options)
+}
+
+func (i *Injector) OverrideZero(val any, opts ...ProvideOption) error {
+	options := &providerOptions{}
+	for _, po := range opts {
+		po(options)
+	}
+	svc, err := newServiceZero(options.Name, val)
+	if err != nil {
+		return err
+	}
+	return i.override(svc, options)
+}
 func (i *Injector) provide(svc Service, opts *providerOptions) (err error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	return i.provideLocked(svc, opts)
+}
 
+func (i *Injector) override(svc Service, opts *providerOptions) (err error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	opts.IsOverride = true
+	err = i.provideLocked(svc, opts)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *Injector) provideLocked(svc Service, opts *providerOptions) (err error) {
 	name := svc.getName()
-	if i.existLocked(name) {
+	oldSvc, ok := i.services[name]
+	if !opts.IsOverride && ok {
 		return fmt.Errorf("name: %v, err: %w", name, ErrServiceAlreadyExists)
 	}
-
-	i.services[name] = svc
+	if opts.IsOverride && ok {
+		i.instances.Delete(name)
+		i.resetAssociatedService(name)
+		i.serviceInstances[oldSvc] = slices.DeleteFunc(i.serviceInstances[oldSvc], func(s string) bool { return s == name })
+	}
+	insNames := []string{name}
 	for _, as := range opts.As {
 		// check as
 		asrv := reflect.ValueOf(as)
@@ -111,17 +159,22 @@ func (i *Injector) provide(svc Service, opts *providerOptions) (err error) {
 			return err
 		}
 		asName := asrv.Type().String()
-		if i.existLocked(asName) {
+		oldAs, ok := i.services[asName]
+		if !opts.IsOverride && ok {
 			return fmt.Errorf("name: %v, err: %w", asName, ErrServiceAlreadyExists)
 		}
-		i.services[asrv.Type().String()] = svc
+		if opts.IsOverride {
+			i.instances.Delete(asName)
+			i.resetAssociatedService(asName)
+			i.serviceInstances[oldAs] = slices.DeleteFunc(i.serviceInstances[oldAs], func(s string) bool { return s == asName })
+		}
+		insNames = append(insNames, asName)
+	}
+	i.serviceInstances[svc] = insNames
+	for _, v := range insNames {
+		i.services[v] = svc
 	}
 	return
-}
-
-func (i *Injector) existLocked(name string) bool {
-	_, ok := i.services[name]
-	return ok
 }
 
 func (i *Injector) invoke(name string, opts ...InvokeOption) (ins any, err error) {
@@ -135,13 +188,13 @@ func (i *Injector) invoke(name string, opts ...InvokeOption) (ins any, err error
 	if !ok {
 		return nil, fmt.Errorf("name: %v, err: %w", name, ErrUnknownService)
 	}
-	ins, err = svc.getInstance(i)
+	ins, err = svc.getInstance(i, name)
 	if err != nil {
 		return nil, err
 	}
 	for len(i.earlyServices) > 0 {
 		for k, s := range i.earlyServices {
-			_, err = s.getInstance(i)
+			_, err = s.getInstance(i, s.getName())
 			if err != nil {
 				return nil, err
 			}
@@ -156,7 +209,7 @@ func (i *Injector) getValueLocked(name string) (val reflect.Value, err error) {
 	if !ok {
 		return val, fmt.Errorf("name: %v, err: %w", name, ErrUnknownService)
 	}
-	return svc.getValue(i)
+	return svc.getValue(i, name)
 }
 
 func (i *Injector) getInstance(name string) (any, bool) {
@@ -169,6 +222,25 @@ func (i *Injector) setInstance(name string, ins any) {
 
 func (i *Injector) setEarlyService(svc Service) {
 	i.earlyServices[svc.getName()] = svc
+}
+
+func (i *Injector) appendAssociatedService(paramName string, svc Service) {
+	i.associatedServices[paramName] = append(i.associatedServices[paramName], svc)
+}
+
+func (i *Injector) resetAssociatedService(name string) {
+	svcs := i.associatedServices[name]
+	delete(i.associatedServices, name)
+	for _, s := range svcs {
+		isReset := s.reset()
+		if !isReset {
+			continue
+		}
+		for _, insName := range i.serviceInstances[s] {
+			i.instances.Delete(insName)
+			i.resetAssociatedService(insName)
+		}
+	}
 }
 
 func checkAsType(svc, as reflect.Type) error {
