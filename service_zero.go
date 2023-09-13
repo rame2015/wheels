@@ -16,7 +16,6 @@ http://www.apache.org/licenses/LICENSE-2.0
 
 package wheels
 
-// TODO auth
 import (
 	"fmt"
 	"reflect"
@@ -36,17 +35,19 @@ type ServiceZero struct {
 
 func newServiceZero(name string, val any) (Service, error) {
 	rt := reflect.TypeOf(val)
-	if rt.Kind() != reflect.Struct && (rt.Kind() != reflect.Pointer || rt.Elem().Kind() != reflect.Struct) {
+	rv := reflect.ValueOf(val)
+	if rt.Kind() != reflect.Pointer || rt.Elem().Kind() != reflect.Struct {
 		return nil, fmt.Errorf("name: %v, err: %w", name, ErrInvalidZeroType)
 	}
 	if name == "" {
 		name = rt.String()
 	}
+
 	return &ServiceZero{
 		name:     name,
 		instance: val,
 		typ:      rt,
-		value:    reflect.ValueOf(val),
+		value:    rv,
 	}, nil
 }
 

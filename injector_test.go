@@ -27,7 +27,9 @@ type ServiceTest interface {
 	Print() string
 }
 
-type ServiceA struct{}
+type ServiceA struct {
+	val int
+}
 
 func NewServiceA() *ServiceA {
 	return &ServiceA{}
@@ -51,7 +53,7 @@ func (s *ServiceB) Print() string {
 }
 
 type ServiceC struct {
-	D ServiceD
+	D *ServiceD
 }
 
 func (s *ServiceC) Print() string {
@@ -63,7 +65,7 @@ type ServiceD struct {
 	A *ServiceA
 }
 
-func (s ServiceD) Print() string {
+func (s *ServiceD) Print() string {
 	return "D"
 }
 
@@ -221,7 +223,7 @@ func TestInjector_ProvideZero(t *testing.T) {
 		{
 			name:    "A struct",
 			args:    args{val: ServiceA{}},
-			wantErr: nil,
+			wantErr: ErrInvalidZeroType,
 		},
 		{
 			name:    "A pointer",
@@ -278,7 +280,7 @@ func TestInjector_ProvideAs(t *testing.T) {
 			name: "An option passed an interface that is not implemented by the service",
 			args: args{
 				provide: i.ProvideZero,
-				val:     ServiceC{},
+				val:     &ServiceG{},
 				opts:    []ProvideOption{As(new(ServiceTest))},
 			},
 			wantErr: ErrServiceNotImplementsAs,
@@ -287,7 +289,7 @@ func TestInjector_ProvideAs(t *testing.T) {
 			name: "The option did not pass an interface",
 			args: args{
 				provide: i.ProvideZero,
-				val:     ServiceA{},
+				val:     &ServiceA{},
 				opts:    []ProvideOption{As(new(int))},
 			},
 			wantErr: ErrInvalidAsType,
@@ -324,7 +326,7 @@ func TestInjector_Invoke(t *testing.T) {
 	_ = i.ProvideInstance(&ServiceA{})
 	_ = i.Provide(NewServiceB, As(new(ServiceTest)))
 	_ = i.ProvideZero(&ServiceC{})
-	_ = i.ProvideZero(ServiceD{})
+	_ = i.ProvideZero(&ServiceD{})
 	_ = i.ProvideZero(&ServiceE{})
 	_ = i.Provide(newServiceF)
 	_ = i.ProvideZero(&ServiceG{})
@@ -369,7 +371,7 @@ func TestInjector_Invoke(t *testing.T) {
 		},
 		{
 			name:    "D",
-			args:    args{name: "wheels.ServiceD"},
+			args:    args{name: "*wheels.ServiceD"},
 			wantErr: nil,
 		},
 		{
@@ -401,7 +403,7 @@ func TestInjector_Override(t *testing.T) {
 	_ = i.Provide(NewServiceB, As(new(ServiceTest)))
 	_ = i.ProvideInstance(&ServiceA{})
 	_ = i.ProvideZero(&ServiceC{})
-	_ = i.ProvideZero(ServiceD{})
+	_ = i.ProvideZero(&ServiceD{})
 	_ = i.ProvideZero(&ServiceE{})
 	b, _ := i.Invoke("wheels.ServiceTest")
 	assert.Equal(t, "B", b.(ServiceTest).Print())
@@ -457,7 +459,7 @@ func TestInjector_OverrideAssociated(t *testing.T) {
 	_ = i.Provide(NewServiceB, As(new(ServiceTest)))
 	_ = i.ProvideInstance(&ServiceA{})
 	_ = i.ProvideZero(&ServiceC{})
-	_ = i.ProvideZero(ServiceD{})
+	_ = i.ProvideZero(&ServiceD{})
 	_ = i.ProvideZero(&ServiceE{})
 	_ = i.ProvideZero(&ServiceH{})
 	_ = i.Provide(newServiceJ)

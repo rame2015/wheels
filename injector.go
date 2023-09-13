@@ -116,6 +116,7 @@ func (i *Injector) OverrideZero(val any, opts ...ProvideOption) error {
 	}
 	return i.override(svc, options)
 }
+
 func (i *Injector) provide(svc Service, opts *providerOptions) (err error) {
 	i.mu.Lock()
 	defer i.mu.Unlock()

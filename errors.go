@@ -9,4 +9,5 @@ var (
 	ErrInvalidAsType          = errors.New("invalid as type")
 	ErrInvalidCtorType        = errors.New("invalid ctor type")
 	ErrInvalidZeroType        = errors.New("invalid zero type")
+	ErrInvalidInvokeType      = errors.New("invalid invoke type")
 )
