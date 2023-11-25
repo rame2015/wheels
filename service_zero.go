@@ -27,15 +27,14 @@ type ServiceZero struct {
 	name string
 
 	mu         sync.Mutex
-	instance   any
-	value      reflect.Value
 	built      bool
 	paramNames []string
+	value      reflect.Value
+	instance   any
 }
 
 func newServiceZero(name string, val any) (Service, error) {
 	rt := reflect.TypeOf(val)
-	rv := reflect.ValueOf(val)
 	if rt.Kind() != reflect.Pointer || rt.Elem().Kind() != reflect.Struct {
 		return nil, fmt.Errorf("name: %v, err: %w", name, ErrInvalidZeroType)
 	}
@@ -43,12 +42,12 @@ func newServiceZero(name string, val any) (Service, error) {
 		name = rt.String()
 	}
 
-	return &ServiceZero{
-		name:     name,
-		instance: val,
-		typ:      rt,
-		value:    rv,
-	}, nil
+	s := &ServiceZero{
+		name: name,
+		typ:  rt,
+	}
+	s.init()
+	return s, nil
 }
 
 func (s *ServiceZero) reset() bool {
@@ -59,6 +58,8 @@ func (s *ServiceZero) reset() bool {
 	}
 	s.built = false
 	s.paramNames = nil
+	s.value = reflect.Value{}
+	s.init()
 	return true
 }
 
@@ -83,6 +84,16 @@ func (s *ServiceZero) getInstance(i *Injector, insName string) (ins any, err err
 	return s.instance, nil
 }
 
+func (s *ServiceZero) init() {
+	switch s.typ.Kind() {
+	case reflect.Struct:
+		s.value = reflect.New(s.typ).Elem()
+	case reflect.Pointer:
+		s.value = reflect.New(s.typ.Elem())
+	}
+	s.instance = s.value.Interface()
+}
+
 func (s *ServiceZero) buildInstanceLocked(i *Injector, insName string) (err error) {
 	val := s.value
 	if s.typ.Kind() == reflect.Ptr {
@@ -90,6 +101,7 @@ func (s *ServiceZero) buildInstanceLocked(i *Injector, insName string) (err erro
 	}
 	for j := 0; j < val.Type().NumField(); j++ {
 		fe := val.Field(j)
+		// TODO: check can set before
 		if !fe.CanSet() {
 			continue
 		}
